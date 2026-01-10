@@ -51,22 +51,47 @@ impl Chip8 {
 
             // DECODE + EXECUTE
             match opcode.code() {
-                // SYSTEM
                 0x0 => match opcode.inner() {
-                    0x00E0 => display.clear(),
+                    0x00E0 => display.clear(),     // clear the display
+                    0x00E3 => pc.set(stack.pop()), // return from subroutine
                     _ => unknown_opcode(opcode, pc.value(), &mut exit),
                 },
-                
-                // FLOW CONTROL
-                0x1 => pc.set(opcode.nnn()),
+                0x1 => pc.set(opcode.nnn()), // jump to address
                 0x2 => {
+                    // call subroutine at address
                     stack.push(pc.value());
                     pc.set(opcode.nnn());
                 }
-                0xB => pc.set(registers[0x0].get() as u16 + opcode.nnn()),
-                
-                // MEMORY
-                0xA => index.set(opcode.nnn()),
+                0x3 => {} // skip conditionally
+                0x4 => {} // skip conditionally
+                0x5 => {} // skip conditionally
+                0x6 => {} // set variable register
+                0x7 => {} // add
+                0x8 => match opcode.n() {
+                    // logical and arithmetic (all set vx unless stated)
+                    0x0 => {} // set
+                    0x1 => {} // OR
+                    0x2 => {} // AND
+                    0x3 => {} // XOR
+                    0x4 => {} // add (and set vf=1 (carry flag))
+                    0x5 => {} // vx - vy
+                    0x6 => {} // shift vx 1bit right TODO weird behavior (see doc)
+                    0x7 => {} // vy - vx
+                    0xE => {} // shift vx 1bit left TODO weird behavior (see doc)
+                    _ => unknown_opcode(opcode, pc.value(), &mut exit),
+                },
+                0x9 => {}                       // skip conditionally
+                0xA => index.set(opcode.nnn()), // set index
+                0xB => pc.set(registers[0x0].get() as u16 + opcode.nnn()), // jump with offset TODO make configurable (see doc)
+                0xC => {} // set vx to random number AND nn
+                0xD => {} // display logic
+                0xE => match opcode.nn() {
+                    // skip if key
+                    0x9E => {}
+                    0xA1 => {}
+                    _ => unknown_opcode(opcode, pc.value(), &mut exit),
+                },
+                0xF => {} // many things
                 _ => unknown_opcode(opcode, pc.value(), &mut exit),
             }
 
@@ -83,7 +108,7 @@ mod tests {
 
     #[test]
     fn test_chip8() {
-        let mut chip8 = Chip8::new();
+        let chip8 = Chip8::default();
         assert_eq!(chip8.pc.value(), 0x200);
     }
 }
