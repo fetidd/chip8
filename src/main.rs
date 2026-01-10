@@ -1,4 +1,4 @@
-mod chip;
+mod chip8;
 mod display;
 mod font;
 mod memory;
@@ -8,5 +8,6 @@ mod stack;
 mod timer;
 
 fn main() {
-    let chip = chip::Chip::default();
+    let mut chip = chip::Chip8::default();
+    chip.run();
 }
