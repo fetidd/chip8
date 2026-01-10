@@ -1,2 +1,3 @@
-#[derive(Debug, Default, Clone, Copy)]
-pub struct Timer(u8);
+new_register!(Timer, u8);
+
+impl Timer {}

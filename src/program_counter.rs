@@ -3,8 +3,8 @@ pub struct ProgramCounter(u16);
 
 impl ProgramCounter {
     pub const INCREMENT: u16 = 2;
-
-    pub fn value(&self) -> u16 {
+    
+    pub fn get(&self) -> u16 {
         self.0
     }
 
@@ -12,7 +12,7 @@ impl ProgramCounter {
         self.0 += Self::INCREMENT;
     }
 
-    pub fn set(&mut self, addr: u16) {
-        self.0 = addr;
+    pub fn set(&mut self, arg: u16) {
+        self.0 = arg;
     }
 }

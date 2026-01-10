@@ -2,7 +2,7 @@ use crate::{
     display::Display,
     memory::Memory,
     program_counter::ProgramCounter,
-    register::{Register, Register8Bit, Register16Bit},
+    register::{Register8BitArray, Register16Bit},
     stack::Stack,
     timer::Timer,
 };
@@ -13,7 +13,7 @@ pub struct Chip8 {
     stack: Stack,
     display: Display,
     index: Register16Bit,
-    registers: [Register8Bit; 16],
+    registers: Register8BitArray,
     pc: ProgramCounter,
     delay_timer: Timer,
     sound_timer: Timer,
@@ -42,57 +42,173 @@ impl Chip8 {
             *should_exit = true;
         };
 
-        pc.set(0x200); // this is where the program starts, memory before this is reserved for the interpreter and the font set
+        // This is where the program starts, memory before this is reserved for the interpreter(?) and the font set
+        pc.set(Memory::PROGRAM_START);
 
         'main: loop {
             // FETCH
-            let opcode = memory.read(pc.value());
+            let opcode = memory.read_opcode(pc.get());
             pc.increment();
 
             // DECODE + EXECUTE
             match opcode.code() {
                 0x0 => match opcode.inner() {
-                    0x00E0 => display.clear(),     // clear the display
-                    0x00E3 => pc.set(stack.pop()), // return from subroutine
-                    _ => unknown_opcode(opcode, pc.value(), &mut exit),
+                    // Clear the display
+                    0x00E0 => display.clear(),
+                    // Return from subroutine
+                    0x00E3 => pc.set(stack.pop()),
+                    _ => unknown_opcode(opcode, pc.get(), &mut exit),
                 },
-                0x1 => pc.set(opcode.nnn()), // jump to address
+                // Jump to address
+                0x1 => pc.set(opcode.nnn()),
+                // Call subroutine at address
                 0x2 => {
-                    // call subroutine at address
-                    stack.push(pc.value());
+                    stack.push(pc.get());
                     pc.set(opcode.nnn());
                 }
-                0x3 => {} // skip conditionally
-                0x4 => {} // skip conditionally
-                0x5 => {} // skip conditionally
-                0x6 => {} // set variable register
-                0x7 => {} // add
+                // Skip conditionally
+                0x3 => {
+                    if registers[opcode.x()].get() == opcode.nn() {
+                        pc.increment();
+                    }
+                }
+                // Skip conditionally
+                0x4 => {
+                    if registers[opcode.x()].get() != opcode.nn() {
+                        pc.increment();
+                    }
+                }
+                // Skip conditionally
+                0x5 => {
+                    if registers[opcode.x()].get() == registers[opcode.y()].get() {
+                        pc.increment();
+                    }
+                }
+                // Set variable register
+                0x6 => registers[opcode.x()].set(opcode.nn()),
+                // Add
+                0x7 => {
+                    let new = registers[opcode.x()].get() + opcode.nn();
+                    registers[opcode.x()].set(new);
+                }
+                // Logical and arithmetic (all set vx unless stated)
                 0x8 => match opcode.n() {
-                    // logical and arithmetic (all set vx unless stated)
-                    0x0 => {} // set
-                    0x1 => {} // OR
-                    0x2 => {} // AND
-                    0x3 => {} // XOR
-                    0x4 => {} // add (and set vf=1 (carry flag))
-                    0x5 => {} // vx - vy
-                    0x6 => {} // shift vx 1bit right TODO weird behavior (see doc)
-                    0x7 => {} // vy - vx
-                    0xE => {} // shift vx 1bit left TODO weird behavior (see doc)
-                    _ => unknown_opcode(opcode, pc.value(), &mut exit),
+                    // Set
+                    0x0 => {
+                        let vy = registers[opcode.y()].get();
+                        registers[opcode.x()].set(vy);
+                    }
+                    // OR
+                    0x1 => {
+                        let result = registers[opcode.x()].get() | registers[opcode.y()].get();
+                        registers[opcode.x()].set(result);
+                    }
+                    // AND
+                    0x2 => {
+                        let result = registers[opcode.x()].get() & registers[opcode.y()].get();
+                        registers[opcode.x()].set(result);
+                    }
+                    // XOR
+                    0x3 => {
+                        let result = registers[opcode.x()].get() ^ registers[opcode.y()].get();
+                        registers[opcode.x()].set(result);
+                    }
+                    // Add (and set vf=1 (carry flag) if overflow)
+                    0x4 => {
+                        let (result, overflow) = registers[opcode.x()]
+                            .get()
+                            .overflowing_add(registers[opcode.y()].get());
+                        registers[opcode.x()].set(result);
+                        registers[0xF].set(overflow as u8);
+                    }
+                    // vx - vy
+                    0x5 => {
+                        let result = registers[opcode.x()].get() - registers[opcode.y()].get();
+                        registers[opcode.x()].set(result);
+                    }
+                    // Shift vx 1bit right TODO weird behavior (see doc)
+                    0x6 => {
+                        let vx = registers[opcode.x()].get();
+                        registers[0xF].set(vx & 0x1);
+                        registers[opcode.x()].set(vx >> 1);
+                    }
+                    // vy - vx
+                    0x7 => {
+                        let result = registers[opcode.y()].get() - registers[opcode.x()].get();
+                        registers[opcode.x()].set(result);
+                    }
+                    // Shift vx 1bit left TODO weird behavior (see doc)
+                    0xE => {
+                        let vx = registers[opcode.x()].get();
+                        registers[0xF].set((vx >> 7) & 0x1);
+                        registers[opcode.x()].set(vx << 1);
+                    }
+                    _ => unknown_opcode(opcode, pc.get(), &mut exit),
                 },
-                0x9 => {}                       // skip conditionally
-                0xA => index.set(opcode.nnn()), // set index
-                0xB => pc.set(registers[0x0].get() as u16 + opcode.nnn()), // jump with offset TODO make configurable (see doc)
-                0xC => {} // set vx to random number AND nn
-                0xD => {} // display logic
+                // Skip conditionally
+                0x9 => {
+                    if registers[opcode.x()].get() != registers[opcode.y()].get() {
+                        pc.increment();
+                    }
+                }
+                // Set index
+                0xA => index.set(opcode.nnn()),
+                // Jump with offset TODO make configurable (see doc)
+                0xB => pc.set(registers[0x0].get() as u16 + opcode.nnn()),
+                // Set vx to random number AND nn
+                0xC => registers[opcode.x()].set(rand::random::<u8>() & opcode.nn()),
+                // Display logic
+                0xD => {}
+                // Skip if key
                 0xE => match opcode.nn() {
-                    // skip if key
+                    // Skip if key pressed
                     0x9E => {}
+                    // Skip if key not pressed
                     0xA1 => {}
-                    _ => unknown_opcode(opcode, pc.value(), &mut exit),
+                    _ => unknown_opcode(opcode, pc.get(), &mut exit),
                 },
-                0xF => {} // many things
-                _ => unknown_opcode(opcode, pc.value(), &mut exit),
+                // Timers and memory
+                0xF => match opcode.nn() {
+                    // Set delay timer
+                    0x07 => registers[0x0].set(delay_timer.get()),
+                    // Set delay timer to vx
+                    0x15 => delay_timer.set(registers[opcode.x()].get()),
+                    // Set sound timer to vx
+                    0x18 => sound_timer.set(registers[opcode.x()].get()),
+                    // Add vx to index
+                    0x1E => index.set(index.get() + registers[opcode.x()].get() as u16),
+                    // Set index to font location of vx
+                    0x29 => {
+                        let sprite = memory.read(registers[opcode.x()].get());
+                        index.set(sprite as u16);
+                    }
+                    // Store BCD representation of vx at index
+                    0x33 => {
+                        let vx = registers[opcode.x()].get();
+                        let i = index.get();
+                        memory.write(i, vx / 100);
+                        memory.write(i + 1, (vx % 100) / 10);
+                        memory.write(i + 2, vx % 10);
+                    }
+                    // Store vx at index, index+1, index+2
+                    0x55 => {
+                        let i = index.get();
+                        for j in 0..=opcode.x() {
+                            memory.write(i + j as u16, registers[j].get());
+                        }
+                    }
+                    // Read vx from index, index+1, index+2
+                    0x65 => {
+                        let i = index.get();
+                        for j in 0..=opcode.x() {
+                            registers[j].set(memory.read(i + j as u16));
+                        }
+                    }
+                    // Wait for key press and store in vx
+                    0x0A => {}
+                    _ => unknown_opcode(opcode, pc.get(), &mut exit),
+                },
+                _ => unknown_opcode(opcode, pc.get(), &mut exit),
             }
 
             if exit {
@@ -109,6 +225,6 @@ mod tests {
     #[test]
     fn test_chip8() {
         let chip8 = Chip8::default();
-        assert_eq!(chip8.pc.value(), 0x200);
+        assert_eq!(chip8.pc.get(), 0x200);
     }
 }

@@ -1,30 +1,39 @@
-#[derive(Debug, Default, Clone, Copy)]
-pub struct Register16Bit(u16);
+use std::ops::{Index, IndexMut};
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct Register8Bit(u8);
+#[macro_export]
+macro_rules! new_register {
+    ($name:ident, $size:ty) => {
+        #[derive(Debug, Default, Clone, Copy)]
+        pub struct $name($size);
 
-pub trait Register<Size> {
-    fn get(&self) -> Size;
-    fn set(&mut self, value: Size);
+        impl $name {
+            pub fn get(&self) -> $size {
+                self.0
+            }
+
+            pub fn set(&mut self, value: $size) {
+                self.0 = value;
+            }
+        }
+    };
 }
 
-impl Register<u16> for Register16Bit {
-    fn get(&self) -> u16 {
-        self.0
-    }
+new_register!(Register8Bit, u8);
+new_register!(Register16Bit, u16);
 
-    fn set(&mut self, value: u16) {
-        self.0 = value;
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Register8BitArray([Register8Bit; 16]);
+
+impl Index<u8> for Register8BitArray {
+    type Output = Register8Bit;
+
+    fn index(&self, index: u8) -> &Self::Output {
+        &self.0[index as usize]
     }
 }
 
-impl Register<u8> for Register8Bit {
-    fn get(&self) -> u8 {
-        self.0
-    }
-
-    fn set(&mut self, value: u8) {
-        self.0 = value;
+impl IndexMut<u8> for Register8BitArray {
+    fn index_mut(&mut self, index: u8) -> &mut Self::Output {
+        &mut self.0[index as usize]
     }
 }
