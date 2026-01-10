@@ -19,4 +19,26 @@ pub struct Chip {
     sound_timer: Timer,
 }
 
-impl Chip {}
+impl Chip {
+    pub fn run(&mut self) {
+        let Self {
+            memory,
+            stack,
+            display,
+            index,
+            registers,
+            pc,
+            delay_timer,
+            sound_timer,
+        } = self;
+        loop {
+            let opcode = memory.read(pc.value());
+            pc.increment();
+            match opcode {
+                0x00E0 => display.clear(),
+                0x00EE => stack.pop(),
+                _ => unimplemented!("opcode: {:04X}", opcode),
+            }
+        }
+    }
+}

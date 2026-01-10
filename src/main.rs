@@ -1,5 +1,6 @@
 mod chip;
 mod display;
+mod font;
 mod memory;
 mod program_counter;
 mod register;

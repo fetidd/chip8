@@ -2,3 +2,8 @@ use std::collections::VecDeque;
 
 #[derive(Debug, Default, Clone)]
 pub struct Stack(VecDeque<u16>);
+impl Stack {
+    pub(crate) fn pop(&self) {
+        todo!()
+    }
+}
