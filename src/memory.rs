@@ -11,8 +11,7 @@ impl Memory {
     pub const PROGRAM_START: u16 = 0x200;
 
     fn clear(&mut self) {
-        self.0 = [0; Self::MEMORY_SIZE];
-        self.0[Self::FONT_START as usize..Self::FONT_START as usize + FONT.len()].copy_from_slice(&FONT);
+        self.write_slice(Self::PROGRAM_START, &[0; Self::MEMORY_SIZE - Self::PROGRAM_START as usize]);
     }
 
     pub fn read_opcode<A: Into<usize>>(&self, addr: A) -> OpCode {
@@ -24,15 +23,20 @@ impl Memory {
         self.0[addr.into()]
     }
 
-    pub fn write(&mut self, addr: u16, value: u8) {
-        self.0[addr as usize] = value;
+    pub fn write<A: Into<usize>>(&mut self, addr: A, value: u8) {
+        self.0[addr.into()] = value;
+    }
+    
+    pub fn write_slice<A: Into<usize>>(&mut self, addr: A, data: &[u8]) {
+        let addr = addr.into();
+        self.0[addr..addr + data.len()].copy_from_slice(data);
     }
 }
 
 impl Default for Memory {
     fn default() -> Self {
         let mut memory = Self([0; Self::MEMORY_SIZE]);
-        memory.clear();
+        memory.0[Self::FONT_START as usize..Self::FONT_START as usize + FONT.len()].copy_from_slice(&FONT);
         memory
     }
 }

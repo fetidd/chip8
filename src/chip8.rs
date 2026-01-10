@@ -1,3 +1,6 @@
+use std::{io::Write, thread, time::Duration};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+
 use crate::{
     display::Display,
     memory::Memory,
@@ -5,9 +8,9 @@ use crate::{
     register::{Register8BitArray, Register16Bit},
     stack::Stack,
     timer::Timer,
+    input::Input,
 };
 
-#[derive(Default)]
 pub struct Chip8 {
     memory: Memory,
     stack: Stack,
@@ -17,10 +20,27 @@ pub struct Chip8 {
     pc: ProgramCounter,
     delay_timer: Timer,
     sound_timer: Timer,
+    input: Input,
+}
+
+impl Default for Chip8 {
+    fn default() -> Self {
+        Self {
+            memory: Memory::default(),
+            stack: Stack::default(),
+            display: Display::default(),
+            index: Register16Bit::default(),
+            registers: Register8BitArray::default(),
+            pc: ProgramCounter(Memory::PROGRAM_START),
+            delay_timer: Timer::default(),
+            sound_timer: Timer::default(),
+            input: Input::default(),
+        }
+    }
 }
 
 impl Chip8 {
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let Self {
             memory,
             stack,
@@ -30,6 +50,7 @@ impl Chip8 {
             pc,
             delay_timer,
             sound_timer,
+            input,
         } = self;
 
         let mut exit = false;
@@ -42,14 +63,17 @@ impl Chip8 {
             *should_exit = true;
         };
 
-        // This is where the program starts, memory before this is reserved for the interpreter(?) and the font set
-        pc.set(Memory::PROGRAM_START);
-
         'main: loop {
+            
+            // enable exiting the interpreter with ctrl-c
+            Self::check_keyboard_interrupt(&mut exit)?;
+            
+            input.poll()?;
+
             // FETCH
             let opcode = memory.read_opcode(pc.get());
             pc.increment();
-
+            
             // DECODE + EXECUTE
             match opcode.code() {
                 0x0 => match opcode.inner() {
@@ -158,13 +182,20 @@ impl Chip8 {
                 // Set vx to random number AND nn
                 0xC => registers[opcode.x()].set(rand::random::<u8>() & opcode.nn()),
                 // Display logic
-                0xD => {}
+                0xD => {
+                    let x = registers[opcode.x()].get();
+                    let y = registers[opcode.y()].get();
+                }
                 // Skip if key
                 0xE => match opcode.nn() {
                     // Skip if key pressed
-                    0x9E => {}
+                    0x9E => if input.is_pressed(opcode.x()) {
+                        pc.increment();
+                    },
                     // Skip if key not pressed
-                    0xA1 => {}
+                    0xA1 => if !input.is_pressed(opcode.x()) {
+                        pc.increment();
+                    },
                     _ => unknown_opcode(opcode, pc.get(), &mut exit),
                 },
                 // Timers and memory
@@ -205,7 +236,10 @@ impl Chip8 {
                         }
                     }
                     // Wait for key press and store in vx
-                    0x0A => {}
+                    0x0A => {
+                        input.block()?;
+                        registers[opcode.x()].set(input.get_pressed().expect("there was no pressed key after blocking for 0xFX0A..."));
+                    }
                     _ => unknown_opcode(opcode, pc.get(), &mut exit),
                 },
                 _ => unknown_opcode(opcode, pc.get(), &mut exit),
@@ -215,6 +249,23 @@ impl Chip8 {
                 break 'main;
             }
         }
+        Ok(())
+    }
+    
+    pub fn load_rom(&mut self, rom: &[u8]) {
+        self.memory.write_slice(Memory::PROGRAM_START, rom);
+    }
+    
+    fn check_keyboard_interrupt(should_exit: &mut bool) -> Result<(), std::io::Error> {
+        if event::poll(Duration::from_millis(16))? {
+            if let Event::Key(KeyEvent { code, modifiers, .. }) = event::read()? {
+                match (code, modifiers) {
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => *should_exit = true,
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
     }
 }
 

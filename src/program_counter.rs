@@ -1,5 +1,5 @@
 #[derive(Debug, Default, Clone, Copy)]
-pub struct ProgramCounter(u16);
+pub struct ProgramCounter(pub u16);
 
 impl ProgramCounter {
     pub const INCREMENT: u16 = 2;
