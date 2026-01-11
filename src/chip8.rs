@@ -1,16 +1,17 @@
-use std::{io::Write, thread, time::Duration};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use std::time::Duration;
 
 use crate::{
     display::Display,
+    input::Input,
     memory::Memory,
     program_counter::ProgramCounter,
     register::{Register8BitArray, Register16Bit},
     stack::Stack,
     timer::Timer,
-    input::Input,
 };
 
+#[derive(Debug)]
 pub struct Chip8 {
     memory: Memory,
     stack: Stack,
@@ -64,16 +65,15 @@ impl Chip8 {
         };
 
         'main: loop {
-            
             // enable exiting the interpreter with ctrl-c
             Self::check_keyboard_interrupt(&mut exit)?;
-            
+
             input.poll()?;
 
             // FETCH
             let opcode = memory.read_opcode(pc.get());
             pc.increment();
-            
+
             // DECODE + EXECUTE
             match opcode.code() {
                 0x0 => match opcode.inner() {
@@ -183,19 +183,47 @@ impl Chip8 {
                 0xC => registers[opcode.x()].set(rand::random::<u8>() & opcode.nn()),
                 // Display logic
                 0xD => {
-                    let x = registers[opcode.x()].get();
-                    let y = registers[opcode.y()].get();
+                    let start_x = registers[opcode.x()].get() % Display::WIDTH as u8;
+                    let mut y = registers[opcode.y()].get() % Display::HEIGHT as u8;
+                    let n = opcode.n();
+                    registers[0xF].set(0); // Reset collision flag
+                    for i in 0..n {
+                        let sprite = memory.read(index.get() + i as u16);
+                        let mut x = start_x; // Reset x for each row
+                        for bit_mask in [128, 64, 32, 16, 8, 4, 2, 1] {
+                            if x as usize >= Display::WIDTH {
+                                break; // Clip at screen edge
+                            }
+                            if sprite & bit_mask != 0 {
+                                if display.is_on(x, y)? {
+                                    display.set(x, y, false)?;
+                                    registers[0xF].set(1); // Collision detected
+                                } else {
+                                    display.set(x, y, true)?;
+                                }
+                            }
+                            x += 1;
+                        }
+                        y += 1;
+                        if y as usize >= Display::HEIGHT {
+                            break;
+                        }
+                    }
                 }
                 // Skip if key
                 0xE => match opcode.nn() {
                     // Skip if key pressed
-                    0x9E => if input.is_pressed(opcode.x()) {
-                        pc.increment();
-                    },
+                    0x9E => {
+                        if input.is_pressed(opcode.x()) {
+                            pc.increment();
+                        }
+                    }
                     // Skip if key not pressed
-                    0xA1 => if !input.is_pressed(opcode.x()) {
-                        pc.increment();
-                    },
+                    0xA1 => {
+                        if !input.is_pressed(opcode.x()) {
+                            pc.increment();
+                        }
+                    }
                     _ => unknown_opcode(opcode, pc.get(), &mut exit),
                 },
                 // Timers and memory
@@ -210,8 +238,9 @@ impl Chip8 {
                     0x1E => index.set(index.get() + registers[opcode.x()].get() as u16),
                     // Set index to font location of vx
                     0x29 => {
-                        let sprite = memory.read(registers[opcode.x()].get());
-                        index.set(sprite as u16);
+                        let char = registers[opcode.x()].get() & 0x0F;
+                        let char_addr = (char * 5) + 5;
+                        index.set(char_addr as u16);
                     }
                     // Store BCD representation of vx at index
                     0x33 => {
@@ -238,12 +267,18 @@ impl Chip8 {
                     // Wait for key press and store in vx
                     0x0A => {
                         input.block()?;
-                        registers[opcode.x()].set(input.get_pressed().expect("there was no pressed key after blocking for 0xFX0A..."));
+                        registers[opcode.x()].set(
+                            input
+                                .get_pressed()
+                                .expect("there was no pressed key after blocking for 0xFX0A..."),
+                        );
                     }
                     _ => unknown_opcode(opcode, pc.get(), &mut exit),
                 },
                 _ => unknown_opcode(opcode, pc.get(), &mut exit),
             }
+
+            display.render()?;
 
             if exit {
                 break 'main;
@@ -251,14 +286,17 @@ impl Chip8 {
         }
         Ok(())
     }
-    
+
     pub fn load_rom(&mut self, rom: &[u8]) {
         self.memory.write_slice(Memory::PROGRAM_START, rom);
     }
-    
+
     fn check_keyboard_interrupt(should_exit: &mut bool) -> Result<(), std::io::Error> {
         if event::poll(Duration::from_millis(16))? {
-            if let Event::Key(KeyEvent { code, modifiers, .. }) = event::read()? {
+            if let Event::Key(KeyEvent {
+                code, modifiers, ..
+            }) = event::read()?
+            {
                 match (code, modifiers) {
                     (KeyCode::Char('c'), KeyModifiers::CONTROL) => *should_exit = true,
                     _ => {}

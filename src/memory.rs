@@ -1,17 +1,18 @@
 use crate::font::FONT;
 
-const _MEMORY_SIZE: usize = 4096;
-
 #[derive(Debug, Clone, Copy)]
-pub struct Memory([u8; _MEMORY_SIZE]);
+pub struct Memory([u8; Self::MEMORY_SIZE]);
 
 impl Memory {
-    const MEMORY_SIZE: usize = _MEMORY_SIZE;
+    const MEMORY_SIZE: usize = 4096;
     pub const FONT_START: u16 = 0x050;
     pub const PROGRAM_START: u16 = 0x200;
 
     fn clear(&mut self) {
-        self.write_slice(Self::PROGRAM_START, &[0; Self::MEMORY_SIZE - Self::PROGRAM_START as usize]);
+        self.write_slice(
+            Self::PROGRAM_START,
+            &[0; Self::MEMORY_SIZE - Self::PROGRAM_START as usize],
+        );
     }
 
     pub fn read_opcode<A: Into<usize>>(&self, addr: A) -> OpCode {
@@ -26,7 +27,7 @@ impl Memory {
     pub fn write<A: Into<usize>>(&mut self, addr: A, value: u8) {
         self.0[addr.into()] = value;
     }
-    
+
     pub fn write_slice<A: Into<usize>>(&mut self, addr: A, data: &[u8]) {
         let addr = addr.into();
         self.0[addr..addr + data.len()].copy_from_slice(data);
@@ -36,7 +37,8 @@ impl Memory {
 impl Default for Memory {
     fn default() -> Self {
         let mut memory = Self([0; Self::MEMORY_SIZE]);
-        memory.0[Self::FONT_START as usize..Self::FONT_START as usize + FONT.len()].copy_from_slice(&FONT);
+        memory.0[Self::FONT_START as usize..Self::FONT_START as usize + FONT.len()]
+            .copy_from_slice(&FONT);
         memory
     }
 }
