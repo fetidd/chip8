@@ -8,23 +8,28 @@ mod register;
 mod stack;
 mod timer;
 
+use std::io::Write;
+
 use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let rom = std::fs::read("roms/br8kout.ch8").unwrap();
+    let mut chip = chip8::Chip8::default();
+    chip.load_rom(&rom);
+
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     enable_raw_mode()?;
 
-    let mut chip = chip8::Chip8::default();
-    let rom = std::fs::read("roms/IBM Logo.ch8").unwrap();
-    chip.load_rom(&rom);
     let err = chip.run();
 
     disable_raw_mode()?;
     execute!(stdout, LeaveAlternateScreen)?;
+    stdout.flush()?;
+
     if let Err(e) = err {
         println!("{e}");
         // dbg!(chip);

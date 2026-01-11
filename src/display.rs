@@ -48,7 +48,7 @@ impl Display {
                     queue!(
                         stdout,
                         cursor::MoveTo(x as u16, y as u16),
-                        style::Print("█")
+                        style::Print('█') // style::Print('x')
                     )?;
                 }
             }
