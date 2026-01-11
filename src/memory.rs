@@ -8,7 +8,7 @@ impl Memory {
     pub const FONT_START: u16 = 0x050;
     pub const PROGRAM_START: u16 = 0x200;
 
-    fn clear(&mut self) {
+    fn _clear(&mut self) {
         self.write_slice(
             Self::PROGRAM_START,
             &[0; Self::MEMORY_SIZE - Self::PROGRAM_START as usize],

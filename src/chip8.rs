@@ -55,13 +55,13 @@ impl Chip8 {
         } = self;
 
         let mut exit = false;
-        let unknown_opcode = |opcode: crate::memory::OpCode, addr: u16, should_exit: &mut bool| {
-            println!(
-                "unknown opcode {:04X} at 0x{:04X}",
+        let unknown_opcode = |opcode: crate::memory::OpCode, addr: u16| {
+            let addr = addr - ProgramCounter::INCREMENT;
+            let e = format!(
+                "unknown opcode {:04X} at {addr} [0x{addr:04X}]",
                 opcode.inner(),
-                addr - ProgramCounter::INCREMENT
             );
-            *should_exit = true;
+            Err(e)
         };
 
         'main: loop {
@@ -81,7 +81,7 @@ impl Chip8 {
                     0x00E0 => display.clear(),
                     // Return from subroutine
                     0x00E3 => pc.set(stack.pop()),
-                    _ => unknown_opcode(opcode, pc.get(), &mut exit),
+                    _ => return unknown_opcode(opcode, pc.get())?,
                 },
                 // Jump to address
                 0x1 => pc.set(opcode.nnn()),
@@ -167,7 +167,7 @@ impl Chip8 {
                         registers[0xF].set((vx >> 7) & 0x1);
                         registers[opcode.x()].set(vx << 1);
                     }
-                    _ => unknown_opcode(opcode, pc.get(), &mut exit),
+                    _ => return unknown_opcode(opcode, pc.get())?,
                 },
                 // Skip conditionally
                 0x9 => {
@@ -224,7 +224,7 @@ impl Chip8 {
                             pc.increment();
                         }
                     }
-                    _ => unknown_opcode(opcode, pc.get(), &mut exit),
+                    _ => return unknown_opcode(opcode, pc.get())?,
                 },
                 // Timers and memory
                 0xF => match opcode.nn() {
@@ -266,16 +266,15 @@ impl Chip8 {
                     }
                     // Wait for key press and store in vx
                     0x0A => {
-                        input.block()?;
-                        registers[opcode.x()].set(
-                            input
-                                .get_pressed()
-                                .expect("there was no pressed key after blocking for 0xFX0A..."),
-                        );
+                        if let Some(key) = input.get_pressed() {
+                            registers[opcode.x()].set(key);
+                        } else {
+                            pc.decrement();
+                        }
                     }
-                    _ => unknown_opcode(opcode, pc.get(), &mut exit),
+                    _ => return unknown_opcode(opcode, pc.get())?,
                 },
-                _ => unknown_opcode(opcode, pc.get(), &mut exit),
+                _ => return unknown_opcode(opcode, pc.get())?,
             }
 
             display.render()?;
@@ -283,6 +282,7 @@ impl Chip8 {
             if exit {
                 break 'main;
             }
+            std::thread::sleep(Duration::from_millis(16));
         }
         Ok(())
     }

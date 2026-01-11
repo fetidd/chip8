@@ -16,7 +16,11 @@ use crossterm::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let rom = std::fs::read("roms/br8kout.ch8").unwrap();
+    let args: Vec<_> = std::env::args().skip(1).take(1).collect();
+    if args.is_empty() {
+        panic!("no rom path");
+    }
+    let rom = std::fs::read(&args[0]).unwrap();
     let mut chip = chip8::Chip8::default();
     chip.load_rom(&rom);
 
