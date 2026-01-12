@@ -8,7 +8,6 @@ use crate::{
     register::{Register8BitArray, Register16Bit},
     stack::Stack,
     timer::Timer,
-    utils::debug_out,
 };
 
 #[derive(Debug)]
@@ -64,6 +63,7 @@ impl Chip8 {
         };
 
         loop {
+            display.render()?;
             input.poll()?;
 
             // FETCH
@@ -74,7 +74,7 @@ impl Chip8 {
             match opcode.code() {
                 0x0 => match opcode.inner() {
                     // Clear the display
-                    0x00E0 => display.clear(),
+                    0x00E0 => display.clear()?,
                     // Return from subroutine
                     0x00EE => pc.set(stack.pop()),
                     _ => return unknown_opcode(opcode, pc.get())?,
@@ -236,7 +236,6 @@ impl Chip8 {
                 },
                 _ => return unknown_opcode(opcode, pc.get())?,
             }
-            display.render()?;
             input.clear();
         }
     }

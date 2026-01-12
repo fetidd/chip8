@@ -12,6 +12,7 @@ mod utils;
 use std::io::Write;
 
 use crossterm::{
+    cursor::{Hide, Show},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -23,13 +24,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     chip.load_rom(&rom)?;
 
     let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, Hide)?;
     enable_raw_mode()?;
 
     let err = chip.run();
 
     disable_raw_mode()?;
-    execute!(stdout, LeaveAlternateScreen)?;
+    execute!(stdout, LeaveAlternateScreen, Show)?;
     stdout.flush()?;
 
     if let Err(e) = err {

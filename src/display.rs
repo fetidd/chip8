@@ -1,9 +1,6 @@
 use std::io::{self, Write};
 
-use crossterm::{
-    cursor::{self, Hide},
-    queue, style,
-};
+use crossterm::{cursor, queue, style};
 
 #[derive(Debug)]
 pub struct Display {
@@ -22,8 +19,10 @@ impl Display {
     pub const WIDTH: usize = 64;
     pub const HEIGHT: usize = 32;
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self) -> Result<(), std::io::Error> {
         self.pixels = [[false; Self::WIDTH]; Self::HEIGHT];
+        self.render()?;
+        Ok(())
     }
 
     pub fn is_on<A: Into<usize>>(&self, x: A, y: A) -> Result<bool, String> {
@@ -45,16 +44,17 @@ impl Display {
 
     pub fn render(&self) -> Result<(), io::Error> {
         let mut stdout = io::stdout();
-        queue!(stdout, Hide)?;
         for y in 0..self.pixels.len() {
             for x in 0..self.pixels[y].len() {
-                if self.pixels[y][x] {
-                    queue!(
-                        stdout,
-                        cursor::MoveTo(x as u16, y as u16),
-                        style::Print('█') // style::Print('x')
-                    )?;
-                }
+                let char = match self.pixels[y][x] {
+                    true => '█',
+                    false => ' ',
+                };
+                queue!(
+                    stdout,
+                    cursor::MoveTo(x as u16, y as u16),
+                    style::Print(char)
+                )?;
             }
         }
         stdout.flush()?;
