@@ -46,8 +46,8 @@ impl Display {
     pub fn render(&self) -> Result<(), io::Error> {
         let mut stdout = io::stdout();
         queue!(stdout, Hide)?;
-        for y in 0..self.pixels.len() - 1 {
-            for x in 0..self.pixels[y].len() - 1 {
+        for y in 0..self.pixels.len() {
+            for x in 0..self.pixels[y].len() {
                 if self.pixels[y][x] {
                     queue!(
                         stdout,

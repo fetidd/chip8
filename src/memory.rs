@@ -8,29 +8,52 @@ impl Memory {
     pub const FONT_START: u16 = 0x050;
     pub const PROGRAM_START: u16 = 0x200;
 
-    fn _clear(&mut self) {
+    fn _clear(&mut self) -> Result<(), String> {
         self.write_slice(
             Self::PROGRAM_START,
             &[0; Self::MEMORY_SIZE - Self::PROGRAM_START as usize],
-        );
+        )
     }
 
-    pub fn read_opcode<A: Into<usize>>(&self, addr: A) -> OpCode {
+    pub fn read_opcode<A: Into<usize>>(&self, addr: A) -> Result<OpCode, String> {
         let addr = addr.into();
-        OpCode(u16::from_be_bytes([self.0[addr], self.0[addr + 1]]))
+        let hi = *self
+            .0
+            .get(addr)
+            .ok_or_else(|| format!("memory read out of bounds: {addr}"))?;
+        let lo = *self
+            .0
+            .get(addr + 1)
+            .ok_or_else(|| format!("memory read out of bounds: {}", addr + 1))?;
+        Ok(OpCode(u16::from_be_bytes([hi, lo])))
     }
 
-    pub fn read<A: Into<usize>>(&self, addr: A) -> u8 {
-        self.0[addr.into()]
-    }
-
-    pub fn write<A: Into<usize>>(&mut self, addr: A, value: u8) {
-        self.0[addr.into()] = value;
-    }
-
-    pub fn write_slice<A: Into<usize>>(&mut self, addr: A, data: &[u8]) {
+    pub fn read<A: Into<usize>>(&self, addr: A) -> Result<u8, String> {
         let addr = addr.into();
-        self.0[addr..addr + data.len()].copy_from_slice(data);
+        self.0
+            .get(addr)
+            .copied()
+            .ok_or_else(|| format!("memory read out of bounds: {addr}"))
+    }
+
+    pub fn write<A: Into<usize>>(&mut self, addr: A, value: u8) -> Result<(), String> {
+        let addr = addr.into();
+        let cell = self
+            .0
+            .get_mut(addr)
+            .ok_or_else(|| format!("memory write out of bounds: {addr}"))?;
+        *cell = value;
+        Ok(())
+    }
+
+    pub fn write_slice<A: Into<usize>>(&mut self, addr: A, data: &[u8]) -> Result<(), String> {
+        let addr = addr.into();
+        let end = addr + data.len();
+        if end > Self::MEMORY_SIZE {
+            return Err(format!("memory write_slice out of bounds: {addr}..{end}"));
+        }
+        self.0[addr..end].copy_from_slice(data);
+        Ok(())
     }
 }
 
@@ -43,6 +66,7 @@ impl Default for Memory {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct OpCode(u16);
 
 impl OpCode {

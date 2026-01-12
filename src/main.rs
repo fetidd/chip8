@@ -7,6 +7,7 @@ mod program_counter;
 mod register;
 mod stack;
 mod timer;
+mod utils;
 
 use std::io::Write;
 
@@ -16,13 +17,10 @@ use crossterm::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<_> = std::env::args().skip(1).take(1).collect();
-    if args.is_empty() {
-        panic!("no rom path");
-    }
-    let rom = std::fs::read(&args[0]).unwrap();
+    let rom_path = std::env::args().nth(1).ok_or("usage: chip8 <rom_path>")?;
+    let rom = std::fs::read(&rom_path).map_err(|e| format!("failed to read rom: {e}"))?;
     let mut chip = chip8::Chip8::default();
-    chip.load_rom(&rom);
+    chip.load_rom(&rom)?;
 
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;

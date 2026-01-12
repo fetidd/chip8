@@ -1,14 +1,14 @@
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use std::time::Duration;
+use std::error::Error;
 
 use crate::{
     display::Display,
     input::Input,
-    memory::Memory,
+    memory::{Memory, OpCode},
     program_counter::ProgramCounter,
     register::{Register8BitArray, Register16Bit},
     stack::Stack,
     timer::Timer,
+    utils::debug_out,
 };
 
 #[derive(Debug)]
@@ -54,7 +54,6 @@ impl Chip8 {
             input,
         } = self;
 
-        let mut exit = false;
         let unknown_opcode = |opcode: crate::memory::OpCode, addr: u16| {
             let addr = addr - ProgramCounter::INCREMENT;
             let e = format!(
@@ -64,23 +63,20 @@ impl Chip8 {
             Err(e)
         };
 
-        'main: loop {
-            // enable exiting the interpreter with ctrl-c
-            Self::check_keyboard_interrupt(&mut exit)?;
-
+        loop {
             input.poll()?;
 
             // FETCH
-            let opcode = memory.read_opcode(pc.get());
+            let opcode = memory.read_opcode(pc.get())?;
             pc.increment();
-
+            // debug_out(format!("0x{:04X}", opcode.inner()));
             // DECODE + EXECUTE
             match opcode.code() {
                 0x0 => match opcode.inner() {
                     // Clear the display
                     0x00E0 => display.clear(),
                     // Return from subroutine
-                    0x00E3 => pc.set(stack.pop()),
+                    0x00EE => pc.set(stack.pop()),
                     _ => return unknown_opcode(opcode, pc.get())?,
                 },
                 // Jump to address
@@ -92,135 +88,99 @@ impl Chip8 {
                 }
                 // Skip conditionally
                 0x3 => {
-                    if registers[opcode.x()].get() == opcode.nn() {
+                    if registers.get(opcode.x())?.get() == opcode.nn() {
                         pc.increment();
                     }
                 }
                 // Skip conditionally
                 0x4 => {
-                    if registers[opcode.x()].get() != opcode.nn() {
+                    if registers.get(opcode.x())?.get() != opcode.nn() {
                         pc.increment();
                     }
                 }
                 // Skip conditionally
                 0x5 => {
-                    if registers[opcode.x()].get() == registers[opcode.y()].get() {
+                    if registers.get(opcode.x())?.get() == registers.get(opcode.y())?.get() {
                         pc.increment();
                     }
                 }
                 // Set variable register
-                0x6 => registers[opcode.x()].set(opcode.nn()),
+                0x6 => registers.get_mut(opcode.x())?.set(opcode.nn()),
                 // Add
                 0x7 => {
-                    let new = registers[opcode.x()].get() + opcode.nn();
-                    registers[opcode.x()].set(new);
+                    let (new, _overflow) = registers
+                        .get(opcode.x())?
+                        .get()
+                        .overflowing_add(opcode.nn());
+                    registers.get_mut(opcode.x())?.set(new);
                 }
                 // Logical and arithmetic (all set vx unless stated)
                 0x8 => match opcode.n() {
                     // Set
                     0x0 => {
-                        let vy = registers[opcode.y()].get();
-                        registers[opcode.x()].set(vy);
+                        let vy = registers.get(opcode.y())?.get();
+                        registers.get_mut(opcode.x())?.set(vy);
                     }
                     // OR
                     0x1 => {
-                        let result = registers[opcode.x()].get() | registers[opcode.y()].get();
-                        registers[opcode.x()].set(result);
+                        let result =
+                            registers.get(opcode.x())?.get() | registers.get(opcode.y())?.get();
+                        registers.get_mut(opcode.x())?.set(result);
                     }
                     // AND
                     0x2 => {
-                        let result = registers[opcode.x()].get() & registers[opcode.y()].get();
-                        registers[opcode.x()].set(result);
+                        let result =
+                            registers.get(opcode.x())?.get() & registers.get(opcode.y())?.get();
+                        registers.get_mut(opcode.x())?.set(result);
                     }
                     // XOR
                     0x3 => {
-                        let result = registers[opcode.x()].get() ^ registers[opcode.y()].get();
-                        registers[opcode.x()].set(result);
+                        let result =
+                            registers.get(opcode.x())?.get() ^ registers.get(opcode.y())?.get();
+                        registers.get_mut(opcode.x())?.set(result);
                     }
                     // Add (and set vf=1 (carry flag) if overflow)
                     0x4 => {
-                        let (result, overflow) = registers[opcode.x()]
+                        let (result, overflow) = registers
+                            .get(opcode.x())?
                             .get()
-                            .overflowing_add(registers[opcode.y()].get());
-                        registers[opcode.x()].set(result);
-                        registers[0xF].set(overflow as u8);
+                            .overflowing_add(registers.get(opcode.y())?.get());
+                        registers.get_mut(opcode.x())?.set(result);
+                        registers.get_mut(0xF)?.set(overflow as u8);
                     }
-                    // vx - vy
-                    0x5 => {
-                        let result = registers[opcode.x()].get() - registers[opcode.y()].get();
-                        registers[opcode.x()].set(result);
-                    }
-                    // Shift vx 1bit right TODO weird behavior (see doc)
-                    0x6 => {
-                        let vx = registers[opcode.x()].get();
-                        registers[0xF].set(vx & 0x1);
-                        registers[opcode.x()].set(vx >> 1);
-                    }
-                    // vy - vx
-                    0x7 => {
-                        let result = registers[opcode.y()].get() - registers[opcode.x()].get();
-                        registers[opcode.x()].set(result);
-                    }
-                    // Shift vx 1bit left TODO weird behavior (see doc)
-                    0xE => {
-                        let vx = registers[opcode.x()].get();
-                        registers[0xF].set((vx >> 7) & 0x1);
-                        registers[opcode.x()].set(vx << 1);
-                    }
+                    0x5 => Self::subtract_x_y(opcode.x(), opcode.y(), registers)?,
+                    0x6 => Self::shift(opcode, registers, Dir::Right)?,
+                    0x7 => Self::subtract_y_x(opcode.x(), opcode.y(), registers)?,
+                    0xE => Self::shift(opcode, registers, Dir::Left)?,
                     _ => return unknown_opcode(opcode, pc.get())?,
                 },
                 // Skip conditionally
                 0x9 => {
-                    if registers[opcode.x()].get() != registers[opcode.y()].get() {
+                    if registers.get(opcode.x())?.get() != registers.get(opcode.y())?.get() {
                         pc.increment();
                     }
                 }
                 // Set index
                 0xA => index.set(opcode.nnn()),
                 // Jump with offset TODO make configurable (see doc)
-                0xB => pc.set(registers[0x0].get() as u16 + opcode.nnn()),
+                0xB => pc.set(registers.get(0x0)?.get() as u16 + opcode.nnn()),
                 // Set vx to random number AND nn
-                0xC => registers[opcode.x()].set(rand::random::<u8>() & opcode.nn()),
+                0xC => registers
+                    .get_mut(opcode.x())?
+                    .set(rand::random::<u8>() & opcode.nn()),
                 // Display logic
-                0xD => {
-                    let start_x = registers[opcode.x()].get() % Display::WIDTH as u8;
-                    let mut y = registers[opcode.y()].get() % Display::HEIGHT as u8;
-                    let n = opcode.n();
-                    registers[0xF].set(0); // Reset collision flag
-                    for i in 0..n {
-                        let sprite = memory.read(index.get() + i as u16);
-                        let mut x = start_x; // Reset x for each row
-                        for bit_mask in [128, 64, 32, 16, 8, 4, 2, 1] {
-                            if x as usize >= Display::WIDTH {
-                                break; // Clip at screen edge
-                            }
-                            if sprite & bit_mask != 0 {
-                                if display.is_on(x, y)? {
-                                    display.set(x, y, false)?;
-                                    registers[0xF].set(1); // Collision detected
-                                } else {
-                                    display.set(x, y, true)?;
-                                }
-                            }
-                            x += 1;
-                        }
-                        y += 1;
-                        if y as usize >= Display::HEIGHT {
-                            break;
-                        }
-                    }
-                }
+                0xD => Self::update_display(opcode, index, registers, memory, display)?,
                 // Skip if key
                 0xE => match opcode.nn() {
                     // Skip if key pressed
                     0x9E => {
-                        if input.is_pressed(opcode.x()) {
+                        if input.is_pressed(registers.get(opcode.x())?.get())? {
                             pc.increment();
                         }
                     }
                     // Skip if key not pressed
                     0xA1 => {
-                        if !input.is_pressed(opcode.x()) {
+                        if !input.is_pressed(registers.get(opcode.x())?.get())? {
                             pc.increment();
                         }
                     }
@@ -229,45 +189,45 @@ impl Chip8 {
                 // Timers and memory
                 0xF => match opcode.nn() {
                     // Set delay timer
-                    0x07 => registers[0x0].set(delay_timer.get()),
+                    0x07 => registers.get_mut(opcode.x())?.set(delay_timer.get()),
                     // Set delay timer to vx
-                    0x15 => delay_timer.set(registers[opcode.x()].get()),
+                    0x15 => delay_timer.set(registers.get(opcode.x())?.get()),
                     // Set sound timer to vx
-                    0x18 => sound_timer.set(registers[opcode.x()].get()),
+                    0x18 => sound_timer.set(registers.get(opcode.x())?.get()),
                     // Add vx to index
-                    0x1E => index.set(index.get() + registers[opcode.x()].get() as u16),
+                    0x1E => index.set(index.get() + registers.get(opcode.x())?.get() as u16),
                     // Set index to font location of vx
                     0x29 => {
-                        let char = registers[opcode.x()].get() & 0x0F;
+                        let char = registers.get(opcode.x())?.get() & 0x0F;
                         let char_addr = (char * 5) + 5;
                         index.set(char_addr as u16);
                     }
                     // Store BCD representation of vx at index
                     0x33 => {
-                        let vx = registers[opcode.x()].get();
+                        let vx = registers.get(opcode.x())?.get();
                         let i = index.get();
-                        memory.write(i, vx / 100);
-                        memory.write(i + 1, (vx % 100) / 10);
-                        memory.write(i + 2, vx % 10);
+                        memory.write(i, vx / 100)?;
+                        memory.write(i + 1, (vx % 100) / 10)?;
+                        memory.write(i + 2, vx % 10)?;
                     }
                     // Store vx at index, index+1, index+2
                     0x55 => {
                         let i = index.get();
                         for j in 0..=opcode.x() {
-                            memory.write(i + j as u16, registers[j].get());
+                            memory.write(i + j as u16, registers.get(j)?.get())?;
                         }
                     }
                     // Read vx from index, index+1, index+2
                     0x65 => {
                         let i = index.get();
                         for j in 0..=opcode.x() {
-                            registers[j].set(memory.read(i + j as u16));
+                            registers.get_mut(j)?.set(memory.read(i + j as u16)?);
                         }
                     }
                     // Wait for key press and store in vx
                     0x0A => {
                         if let Some(key) = input.get_pressed() {
-                            registers[opcode.x()].set(key);
+                            registers.get_mut(opcode.x())?.set(key);
                         } else {
                             pc.decrement();
                         }
@@ -276,35 +236,101 @@ impl Chip8 {
                 },
                 _ => return unknown_opcode(opcode, pc.get())?,
             }
-
             display.render()?;
-
-            if exit {
-                break 'main;
-            }
-            std::thread::sleep(Duration::from_millis(16));
+            input.clear();
         }
+    }
+
+    pub fn load_rom(&mut self, rom: &[u8]) -> Result<(), String> {
+        self.memory.write_slice(Memory::PROGRAM_START, rom)
+    }
+
+    fn subtract(
+        left: u8,
+        right: u8,
+        registers: &mut Register8BitArray,
+    ) -> Result<(u8, bool), Box<dyn Error>> {
+        let vl = registers.get(left)?;
+        let vr = registers.get(right)?;
+        let l = vl.get();
+        let r = vr.get();
+        Ok(l.overflowing_sub(r))
+    }
+
+    fn subtract_x_y(x: u8, y: u8, registers: &mut Register8BitArray) -> Result<(), Box<dyn Error>> {
+        let (result, overflow) = Self::subtract(x, y, registers)?;
+        registers.get_mut(x)?.set(result);
+        registers.get_mut(0xF)?.set(if overflow { 0 } else { 1 });
         Ok(())
     }
 
-    pub fn load_rom(&mut self, rom: &[u8]) {
-        self.memory.write_slice(Memory::PROGRAM_START, rom);
+    fn subtract_y_x(x: u8, y: u8, registers: &mut Register8BitArray) -> Result<(), Box<dyn Error>> {
+        let (result, overflow) = Self::subtract(y, x, registers)?;
+        registers.get_mut(x)?.set(result);
+        registers.get_mut(0xF)?.set(if overflow { 0 } else { 1 });
+        Ok(())
     }
 
-    fn check_keyboard_interrupt(should_exit: &mut bool) -> Result<(), std::io::Error> {
-        if event::poll(Duration::from_millis(16))? {
-            if let Event::Key(KeyEvent {
-                code, modifiers, ..
-            }) = event::read()?
-            {
-                match (code, modifiers) {
-                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => *should_exit = true,
-                    _ => {}
+    fn update_display(
+        opcode: OpCode,
+        index: &Register16Bit,
+        registers: &mut Register8BitArray,
+        memory: &Memory,
+        display: &mut Display,
+    ) -> Result<(), Box<dyn Error>> {
+        let start_x = registers.get(opcode.x())?.get() % Display::WIDTH as u8;
+        let mut y = registers.get(opcode.y())?.get() % Display::HEIGHT as u8;
+        let n = opcode.n();
+        registers.get_mut(0xF)?.set(0); // Reset collision flag
+        for i in 0..n {
+            let sprite = memory.read(index.get() + i as u16)?;
+            let mut x = start_x; // Reset x for each row
+            for bit_mask in [128, 64, 32, 16, 8, 4, 2, 1] {
+                if x as usize >= Display::WIDTH {
+                    break; // Clip at screen edge
                 }
+                if sprite & bit_mask != 0 {
+                    if display.is_on(x, y)? {
+                        display.set(x, y, false)?;
+                        registers.get_mut(0xF)?.set(1); // Collision detected
+                    } else {
+                        display.set(x, y, true)?;
+                    }
+                }
+                x += 1;
+            }
+            y += 1;
+            if y as usize >= Display::HEIGHT {
+                break;
             }
         }
         Ok(())
     }
+
+    fn shift(
+        opcode: OpCode,
+        registers: &mut Register8BitArray,
+        dir: Dir,
+    ) -> Result<(), Box<dyn Error>> {
+        let vx = registers.get(opcode.x())?.get();
+        registers.get_mut(opcode.x())?.set(match dir {
+            Dir::Left => vx << 1,
+            Dir::Right => vx >> 1,
+        });
+        registers.get_mut(0xF)?.set(
+            match dir {
+                Dir::Left => vx >> 7,
+                Dir::Right => vx,
+            } & 0x1,
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Dir {
+    Left,
+    Right,
 }
 
 #[cfg(test)]
@@ -316,4 +342,16 @@ mod tests {
         let chip8 = Chip8::default();
         assert_eq!(chip8.pc.get(), 0x200);
     }
+
+    #[test]
+    fn test_subtract_x_y() {}
+
+    #[test]
+    fn test_subtract_y_x() {}
+
+    #[test]
+    fn test_update_display() {}
+
+    #[test]
+    fn test_shift() {}
 }

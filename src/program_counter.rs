@@ -9,11 +9,11 @@ impl ProgramCounter {
     }
 
     pub fn increment(&mut self) {
-        self.0 += Self::INCREMENT;
+        self.0 = self.0.saturating_add(Self::INCREMENT);
     }
 
     pub fn decrement(&mut self) {
-        self.0 -= Self::INCREMENT;
+        self.0 = self.0.saturating_sub(Self::INCREMENT);
     }
 
     pub fn set(&mut self, arg: u16) {
