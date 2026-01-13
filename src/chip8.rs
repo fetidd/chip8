@@ -1,4 +1,7 @@
-use std::error::Error;
+use std::{
+    error::Error,
+    time::{Duration, Instant},
+};
 
 use crate::{
     display::Display,
@@ -39,6 +42,8 @@ impl Default for Chip8 {
     }
 }
 
+const FRAME_TIMEOUT: f32 = 1.0 / 60.0;
+
 impl Chip8 {
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let Self {
@@ -62,9 +67,15 @@ impl Chip8 {
             Err(e)
         };
 
+        let mut last_display_refresh = Instant::now();
+
         loop {
-            display.render()?;
-            input.poll()?;
+            let loop_time = Instant::now();
+            if loop_time - last_display_refresh > Duration::from_secs_f32(FRAME_TIMEOUT) {
+                display.render()?;
+                last_display_refresh = loop_time;
+            }
+            // input.poll()?;
 
             // FETCH
             let opcode = memory.read_opcode(pc.get())?;
