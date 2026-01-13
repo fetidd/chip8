@@ -1,16 +1,18 @@
 use std::{
     error::Error,
+    io::Write,
     time::{Duration, Instant},
 };
 
 use crate::{
     display::Display,
-    input::Input,
+    input,
     memory::{Memory, OpCode},
     program_counter::ProgramCounter,
     register::{Register8BitArray, Register16Bit},
     stack::Stack,
     timer::Timer,
+    utils::debug_out,
 };
 
 #[derive(Debug)]
@@ -23,7 +25,7 @@ pub struct Chip8 {
     pc: ProgramCounter,
     delay_timer: Timer,
     sound_timer: Timer,
-    input: Input,
+    // input: Input,
 }
 
 impl Default for Chip8 {
@@ -37,7 +39,7 @@ impl Default for Chip8 {
             pc: ProgramCounter(Memory::PROGRAM_START),
             delay_timer: Timer::default(),
             sound_timer: Timer::default(),
-            input: Input::default(),
+            // input: Input::default(),
         }
     }
 }
@@ -55,7 +57,7 @@ impl Chip8 {
             pc,
             delay_timer,
             sound_timer,
-            input,
+            // input,
         } = self;
 
         let unknown_opcode = |opcode: crate::memory::OpCode, addr: u16| {
@@ -68,19 +70,24 @@ impl Chip8 {
         };
 
         let mut last_display_refresh = Instant::now();
-
+        let mut op_codes = std::fs::File::create("./codes.log")?;
         loop {
             let loop_time = Instant::now();
+
+            let pressed = input::get_pressed_keys()?;
+
             if loop_time - last_display_refresh > Duration::from_secs_f32(FRAME_TIMEOUT) {
                 display.render()?;
                 last_display_refresh = loop_time;
             }
-            // input.poll()?;
 
             // FETCH
             let opcode = memory.read_opcode(pc.get())?;
             pc.increment();
-            // debug_out(format!("0x{:04X}", opcode.inner()));
+
+            let opcode_str = format!("{:04X}", opcode.inner()); // TODO remove this writing out
+            write!(op_codes, "{opcode_str}\n")?;
+
             // DECODE + EXECUTE
             match opcode.code() {
                 0x0 => match opcode.inner() {
@@ -182,21 +189,25 @@ impl Chip8 {
                 // Display logic
                 0xD => Self::update_display(opcode, index, registers, memory, display)?,
                 // Skip if key
-                0xE => match opcode.nn() {
-                    // Skip if key pressed
-                    0x9E => {
-                        if input.is_pressed(registers.get(opcode.x())?.get())? {
-                            pc.increment();
+                0xE => {
+                    // let pressed = input.get_pressed_keys()?;
+                    let register_value = registers.get(opcode.x())?.get();
+                    match opcode.nn() {
+                        // Skip if key pressed
+                        0x9E => {
+                            if pressed.contains(&register_value) {
+                                pc.increment();
+                            }
                         }
-                    }
-                    // Skip if key not pressed
-                    0xA1 => {
-                        if !input.is_pressed(registers.get(opcode.x())?.get())? {
-                            pc.increment();
+                        // Skip if key not pressed
+                        0xA1 => {
+                            if !pressed.contains(&register_value) {
+                                pc.increment();
+                            }
                         }
+                        _ => return unknown_opcode(opcode, pc.get())?,
                     }
-                    _ => return unknown_opcode(opcode, pc.get())?,
-                },
+                }
                 // Timers and memory
                 0xF => match opcode.nn() {
                     // Set delay timer
@@ -237,8 +248,8 @@ impl Chip8 {
                     }
                     // Wait for key press and store in vx
                     0x0A => {
-                        if let Some(key) = input.get_pressed() {
-                            registers.get_mut(opcode.x())?.set(key);
+                        if !pressed.is_empty() {
+                            registers.get_mut(opcode.x())?.set(pressed[0]);
                         } else {
                             pc.decrement();
                         }
@@ -247,7 +258,6 @@ impl Chip8 {
                 },
                 _ => return unknown_opcode(opcode, pc.get())?,
             }
-            input.clear();
         }
     }
 
