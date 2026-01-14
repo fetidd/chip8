@@ -57,7 +57,7 @@ impl Chip8 {
             pc,
             delay_timer,
             sound_timer,
-            // input,
+            keys,
         } = self;
 
         let unknown_opcode = |opcode: crate::memory::OpCode, addr: u16| {
@@ -73,18 +73,18 @@ impl Chip8 {
         let mut op_codes = std::fs::File::create("./codes.log")?;
         loop {
             let loop_time = Instant::now();
-
-            let pressed = input::get_pressed_keys()?;
-
             if loop_time - last_display_refresh > Duration::from_secs_f32(FRAME_TIMEOUT) {
                 display.render()?;
                 last_display_refresh = loop_time;
             }
 
+            keys.update_pressed()?;
+
             // FETCH
             let opcode = memory.read_opcode(pc.get())?;
             pc.increment();
 
+            input::get_pressed_keys()?; // TODO called here to ensure the interrupt is caught, but I feel like that could be done better
             let opcode_str = format!("{:04X}", opcode.inner()); // TODO remove this writing out
             write!(op_codes, "{opcode_str}\n")?;
 
@@ -190,18 +190,17 @@ impl Chip8 {
                 0xD => Self::update_display(opcode, index, registers, memory, display)?,
                 // Skip if key
                 0xE => {
-                    // let pressed = input.get_pressed_keys()?;
                     let register_value = registers.get(opcode.x())?.get();
                     match opcode.nn() {
                         // Skip if key pressed
                         0x9E => {
-                            if pressed.contains(&register_value) {
+                            if keys.is_pressed(register_value) {
                                 pc.increment();
                             }
                         }
                         // Skip if key not pressed
                         0xA1 => {
-                            if !pressed.contains(&register_value) {
+                            if !keys.is_pressed(register_value) {
                                 pc.increment();
                             }
                         }
@@ -248,8 +247,8 @@ impl Chip8 {
                     }
                     // Wait for key press and store in vx
                     0x0A => {
-                        if !pressed.is_empty() {
-                            registers.get_mut(opcode.x())?.set(pressed[0]);
+                        if keys.iter().any(|x| x) {
+                            registers.get_mut(opcode.x())?.set(keys.first_pressed());
                         } else {
                             pc.decrement();
                         }
@@ -258,6 +257,7 @@ impl Chip8 {
                 },
                 _ => return unknown_opcode(opcode, pc.get())?,
             }
+            keys.update_released()?;
         }
     }
 
