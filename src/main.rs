@@ -1,5 +1,6 @@
 mod chip8;
 mod display;
+mod error;
 mod font;
 mod input;
 mod memory;

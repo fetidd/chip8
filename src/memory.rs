@@ -1,3 +1,4 @@
+use crate::error::{Error, Result};
 use crate::font::FONT;
 
 #[derive(Debug, Clone, Copy)]
@@ -8,49 +9,51 @@ impl Memory {
     pub const FONT_START: u16 = 0x050;
     pub const PROGRAM_START: u16 = 0x200;
 
-    fn _clear(&mut self) -> Result<(), String> {
+    fn _clear(&mut self) -> Result<()> {
         self.write_slice(
             Self::PROGRAM_START,
             &[0; Self::MEMORY_SIZE - Self::PROGRAM_START as usize],
         )
     }
 
-    pub fn read_opcode<A: Into<usize>>(&self, addr: A) -> Result<OpCode, String> {
+    pub fn read_opcode<A: Into<usize>>(&self, addr: A) -> Result<OpCode> {
         let addr = addr.into();
         let hi = *self
             .0
             .get(addr)
-            .ok_or_else(|| format!("memory read out of bounds: {addr}"))?;
+            .ok_or_else(|| Error::UnknownError(format!("memory read out of bounds: {addr}")))?;
         let lo = *self
             .0
             .get(addr + 1)
-            .ok_or_else(|| format!("memory read out of bounds: {}", addr + 1))?;
+            .ok_or_else(|| Error::UnknownError(format!("memory read out of bounds: {addr}")))?;
         Ok(OpCode(u16::from_be_bytes([hi, lo])))
     }
 
-    pub fn read<A: Into<usize>>(&self, addr: A) -> Result<u8, String> {
+    pub fn read<A: Into<usize>>(&self, addr: A) -> Result<u8> {
         let addr = addr.into();
         self.0
             .get(addr)
             .copied()
-            .ok_or_else(|| format!("memory read out of bounds: {addr}"))
+            .ok_or_else(|| Error::UnknownError(format!("memory read out of bounds: {addr}")))
     }
 
-    pub fn write<A: Into<usize>>(&mut self, addr: A, value: u8) -> Result<(), String> {
+    pub fn write<A: Into<usize>>(&mut self, addr: A, value: u8) -> Result<()> {
         let addr = addr.into();
         let cell = self
             .0
             .get_mut(addr)
-            .ok_or_else(|| format!("memory write out of bounds: {addr}"))?;
+            .ok_or_else(|| Error::UnknownError(format!("memory read out of bounds: {addr}")))?;
         *cell = value;
         Ok(())
     }
 
-    pub fn write_slice<A: Into<usize>>(&mut self, addr: A, data: &[u8]) -> Result<(), String> {
+    pub fn write_slice<A: Into<usize>>(&mut self, addr: A, data: &[u8]) -> Result<()> {
         let addr = addr.into();
         let end = addr + data.len();
         if end > Self::MEMORY_SIZE {
-            return Err(format!("memory write_slice out of bounds: {addr}..{end}"));
+            return Err(Error::UnknownError(format!(
+                "memory read out of bounds: {addr}"
+            )));
         }
         self.0[addr..end].copy_from_slice(data);
         Ok(())

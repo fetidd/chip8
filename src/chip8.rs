@@ -6,7 +6,8 @@ use std::{
 
 use crate::{
     display::Display,
-    input,
+    error::Result,
+    input::{self, Keys},
     memory::{Memory, OpCode},
     program_counter::ProgramCounter,
     register::{Register8BitArray, Register16Bit},
@@ -25,7 +26,7 @@ pub struct Chip8 {
     pc: ProgramCounter,
     delay_timer: Timer,
     sound_timer: Timer,
-    // input: Input,
+    keys: Keys,
 }
 
 impl Default for Chip8 {
@@ -39,7 +40,7 @@ impl Default for Chip8 {
             pc: ProgramCounter(Memory::PROGRAM_START),
             delay_timer: Timer::default(),
             sound_timer: Timer::default(),
-            // input: Input::default(),
+            keys: Keys::default(),
         }
     }
 }
@@ -47,274 +48,162 @@ impl Default for Chip8 {
 const FRAME_TIMEOUT: f32 = 1.0 / 60.0;
 
 impl Chip8 {
-    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let Self {
-            memory,
-            stack,
-            display,
-            index,
-            registers,
-            pc,
-            delay_timer,
-            sound_timer,
-            keys,
-        } = self;
-
-        let unknown_opcode = |opcode: crate::memory::OpCode, addr: u16| {
-            let addr = addr - ProgramCounter::INCREMENT;
-            let e = format!(
-                "unknown opcode {:04X} at {addr} [0x{addr:04X}]",
-                opcode.inner(),
-            );
-            Err(e)
-        };
-
+    pub fn run(&mut self) -> Result<()> {
         let mut last_display_refresh = Instant::now();
         let mut op_codes = std::fs::File::create("./codes.log")?;
         loop {
             let loop_time = Instant::now();
             if loop_time - last_display_refresh > Duration::from_secs_f32(FRAME_TIMEOUT) {
-                display.render()?;
+                self.display.render()?;
                 last_display_refresh = loop_time;
             }
 
-            keys.update_pressed()?;
+            self.keys.update_pressed()?;
 
             // FETCH
-            let opcode = memory.read_opcode(pc.get())?;
-            pc.increment();
+            let opcode = self.memory.read_opcode(self.pc.get())?;
+            self.pc.increment();
 
-            input::get_pressed_keys()?; // TODO called here to ensure the interrupt is caught, but I feel like that could be done better
+            self.keys.check_for_interrupt()?;
+
             let opcode_str = format!("{:04X}", opcode.inner()); // TODO remove this writing out
             write!(op_codes, "{opcode_str}\n")?;
 
             // DECODE + EXECUTE
-            match opcode.code() {
+            let instruction = match opcode.code() {
                 0x0 => match opcode.inner() {
-                    // Clear the display
-                    0x00E0 => display.clear()?,
-                    // Return from subroutine
-                    0x00EE => pc.set(stack.pop()),
-                    _ => return unknown_opcode(opcode, pc.get())?,
+                    0x00E0 => Self::clear_display,
+                    0x00EE => Self::return_from_subroutine,
+                    _ => Self::unknown_opcode,
                 },
-                // Jump to address
-                0x1 => pc.set(opcode.nnn()),
-                // Call subroutine at address
-                0x2 => {
-                    stack.push(pc.get());
-                    pc.set(opcode.nnn());
-                }
-                // Skip conditionally
-                0x3 => {
-                    if registers.get(opcode.x())?.get() == opcode.nn() {
-                        pc.increment();
-                    }
-                }
-                // Skip conditionally
-                0x4 => {
-                    if registers.get(opcode.x())?.get() != opcode.nn() {
-                        pc.increment();
-                    }
-                }
-                // Skip conditionally
-                0x5 => {
-                    if registers.get(opcode.x())?.get() == registers.get(opcode.y())?.get() {
-                        pc.increment();
-                    }
-                }
-                // Set variable register
-                0x6 => registers.get_mut(opcode.x())?.set(opcode.nn()),
-                // Add
-                0x7 => {
-                    let (new, _overflow) = registers
-                        .get(opcode.x())?
-                        .get()
-                        .overflowing_add(opcode.nn());
-                    registers.get_mut(opcode.x())?.set(new);
-                }
-                // Logical and arithmetic (all set vx unless stated)
+                0x1 => Self::jump_to_address,
+                0x2 => Self::call_subroutine,
+                0x3 => Self::skip_conditonally_equal_nn,
+                0x4 => Self::skip_conditonally_not_equal_nn,
+                0x5 => Self::skip_conditonally_equal_xy,
+                0x6 => Self::set_variable_register,
+                0x7 => Self::add,
                 0x8 => match opcode.n() {
-                    // Set
-                    0x0 => {
-                        let vy = registers.get(opcode.y())?.get();
-                        registers.get_mut(opcode.x())?.set(vy);
-                    }
-                    // OR
-                    0x1 => {
-                        let result =
-                            registers.get(opcode.x())?.get() | registers.get(opcode.y())?.get();
-                        registers.get_mut(opcode.x())?.set(result);
-                    }
-                    // AND
-                    0x2 => {
-                        let result =
-                            registers.get(opcode.x())?.get() & registers.get(opcode.y())?.get();
-                        registers.get_mut(opcode.x())?.set(result);
-                    }
-                    // XOR
-                    0x3 => {
-                        let result =
-                            registers.get(opcode.x())?.get() ^ registers.get(opcode.y())?.get();
-                        registers.get_mut(opcode.x())?.set(result);
-                    }
-                    // Add (and set vf=1 (carry flag) if overflow)
-                    0x4 => {
-                        let (result, overflow) = registers
-                            .get(opcode.x())?
-                            .get()
-                            .overflowing_add(registers.get(opcode.y())?.get());
-                        registers.get_mut(opcode.x())?.set(result);
-                        registers.get_mut(0xF)?.set(overflow as u8);
-                    }
-                    0x5 => Self::subtract_x_y(opcode.x(), opcode.y(), registers)?,
-                    0x6 => Self::shift(opcode, registers, Dir::Right)?,
-                    0x7 => Self::subtract_y_x(opcode.x(), opcode.y(), registers)?,
-                    0xE => Self::shift(opcode, registers, Dir::Left)?,
-                    _ => return unknown_opcode(opcode, pc.get())?,
+                    0x0 => Self::set_vx_from_vy,
+                    0x1 => Self::or,
+                    0x2 => Self::and,
+                    0x3 => Self::xor,
+                    0x4 => Self::add_carry,
+                    0x5 => Self::subtract_x_y,
+                    0x6 => Self::shift_right,
+                    0x7 => Self::subtract_y_x,
+                    0xE => Self::shift_left,
+                    _ => Self::unknown_opcode,
                 },
-                // Skip conditionally
-                0x9 => {
-                    if registers.get(opcode.x())?.get() != registers.get(opcode.y())?.get() {
-                        pc.increment();
-                    }
-                }
-                // Set index
-                0xA => index.set(opcode.nnn()),
-                // Jump with offset TODO make configurable (see doc)
-                0xB => pc.set(registers.get(0x0)?.get() as u16 + opcode.nnn()),
-                // Set vx to random number AND nn
-                0xC => registers
-                    .get_mut(opcode.x())?
-                    .set(rand::random::<u8>() & opcode.nn()),
-                // Display logic
-                0xD => Self::update_display(opcode, index, registers, memory, display)?,
-                // Skip if key
-                0xE => {
-                    let register_value = registers.get(opcode.x())?.get();
-                    match opcode.nn() {
-                        // Skip if key pressed
-                        0x9E => {
-                            if keys.is_pressed(register_value) {
-                                pc.increment();
-                            }
-                        }
-                        // Skip if key not pressed
-                        0xA1 => {
-                            if !keys.is_pressed(register_value) {
-                                pc.increment();
-                            }
-                        }
-                        _ => return unknown_opcode(opcode, pc.get())?,
-                    }
-                }
-                // Timers and memory
+                0x9 => Self::skip_conditonally_not_equal_xy,
+                0xA => Self::set_index,
+                0xB => Self::jump_with_offset,
+                0xC => Self::random_and,
+                0xD => Self::update_display,
+                0xE => match opcode.nn() {
+                    0x9E => Self::skip_if_key,
+                    0xA1 => Self::skip_if_not_key,
+                    _ => Self::unknown_opcode,
+                },
                 0xF => match opcode.nn() {
-                    // Set delay timer
-                    0x07 => registers.get_mut(opcode.x())?.set(delay_timer.get()),
-                    // Set delay timer to vx
-                    0x15 => delay_timer.set(registers.get(opcode.x())?.get()),
-                    // Set sound timer to vx
-                    0x18 => sound_timer.set(registers.get(opcode.x())?.get()),
-                    // Add vx to index
-                    0x1E => index.set(index.get() + registers.get(opcode.x())?.get() as u16),
-                    // Set index to font location of vx
-                    0x29 => {
-                        let char = registers.get(opcode.x())?.get() & 0x0F;
-                        let char_addr = (char * 5) + 5;
-                        index.set(char_addr as u16);
-                    }
-                    // Store BCD representation of vx at index
-                    0x33 => {
-                        let vx = registers.get(opcode.x())?.get();
-                        let i = index.get();
-                        memory.write(i, vx / 100)?;
-                        memory.write(i + 1, (vx % 100) / 10)?;
-                        memory.write(i + 2, vx % 10)?;
-                    }
-                    // Store vx at index, index+1, index+2
-                    0x55 => {
-                        let i = index.get();
-                        for j in 0..=opcode.x() {
-                            memory.write(i + j as u16, registers.get(j)?.get())?;
-                        }
-                    }
-                    // Read vx from index, index+1, index+2
-                    0x65 => {
-                        let i = index.get();
-                        for j in 0..=opcode.x() {
-                            registers.get_mut(j)?.set(memory.read(i + j as u16)?);
-                        }
-                    }
-                    // Wait for key press and store in vx
-                    0x0A => {
-                        if keys.iter().any(|x| x) {
-                            registers.get_mut(opcode.x())?.set(keys.first_pressed());
-                        } else {
-                            pc.decrement();
-                        }
-                    }
-                    _ => return unknown_opcode(opcode, pc.get())?,
+                    0x07 => Self::set_x_to_delay,
+                    0x15 => Self::set_delay,
+                    0x18 => Self::set_sound,
+                    0x1E => Self::add_x_to_index,
+                    0x29 => Self::set_index_to_font,
+                    0x33 => Self::bcd_x_in_index,
+                    0x55 => Self::set_x_in_index_spread,
+                    0x65 => Self::read_x_from_index_spread,
+                    0x0A => Self::wait_for_key,
+                    _ => Self::unknown_opcode,
                 },
-                _ => return unknown_opcode(opcode, pc.get())?,
-            }
-            keys.update_released()?;
+                _ => Self::unknown_opcode,
+            };
+            instruction(self, opcode)?;
+            self.keys.update_released()?;
         }
     }
 
-    pub fn load_rom(&mut self, rom: &[u8]) -> Result<(), String> {
+    fn unknown_opcode(&mut self, opcode: OpCode) -> Result<()> {
+        let addr = self.pc.get() - ProgramCounter::INCREMENT;
+        let e = format!(
+            "unknown opcode {:04X} at {addr} [0x{addr:04X}]",
+            opcode.inner(),
+        );
+        Err(crate::error::Error::FatalError(e))
+    }
+
+    fn call_subroutine(&mut self, opcode: OpCode) -> Result<()> {
+        self.stack.push(self.pc.get());
+        self.pc.set(opcode.nnn());
+        Ok(())
+    }
+
+    fn return_from_subroutine(&mut self, _opcode: OpCode) -> Result<()> {
+        self.pc.set(self.stack.pop());
+        Ok(())
+    }
+
+    fn jump_to_address(&mut self, opcode: OpCode) -> Result<()> {
+        self.pc.set(opcode.nnn());
+        Ok(())
+    }
+
+    pub fn load_rom(&mut self, rom: &[u8]) -> Result<()> {
         self.memory.write_slice(Memory::PROGRAM_START, rom)
     }
 
-    fn subtract(
-        left: u8,
-        right: u8,
-        registers: &mut Register8BitArray,
-    ) -> Result<(u8, bool), Box<dyn Error>> {
-        let vl = registers.get(left)?;
-        let vr = registers.get(right)?;
+    fn subtract(&mut self, left: u8, right: u8) -> Result<(u8, bool)> {
+        let vl = self.registers.get(left)?;
+        let vr = self.registers.get(right)?;
         let l = vl.get();
         let r = vr.get();
         Ok(l.overflowing_sub(r))
     }
 
-    fn subtract_x_y(x: u8, y: u8, registers: &mut Register8BitArray) -> Result<(), Box<dyn Error>> {
-        let (result, overflow) = Self::subtract(x, y, registers)?;
-        registers.get_mut(x)?.set(result);
-        registers.get_mut(0xF)?.set(if overflow { 0 } else { 1 });
+    fn subtract_x_y(&mut self, opcode: OpCode) -> Result<()> {
+        let (x, y) = (opcode.x(), opcode.y());
+        let (result, overflow) = self.subtract(x, y)?;
+        self.registers.get_mut(x)?.set(result);
+        self.registers
+            .get_mut(0xF)?
+            .set(if overflow { 0 } else { 1 });
         Ok(())
     }
 
-    fn subtract_y_x(x: u8, y: u8, registers: &mut Register8BitArray) -> Result<(), Box<dyn Error>> {
-        let (result, overflow) = Self::subtract(y, x, registers)?;
-        registers.get_mut(x)?.set(result);
-        registers.get_mut(0xF)?.set(if overflow { 0 } else { 1 });
+    fn subtract_y_x(&mut self, opcode: OpCode) -> Result<()> {
+        let (x, y) = (opcode.x(), opcode.y());
+        let (result, overflow) = self.subtract(y, x)?;
+        self.registers.get_mut(x)?.set(result);
+        self.registers
+            .get_mut(0xF)?
+            .set(if overflow { 0 } else { 1 });
         Ok(())
     }
 
-    fn update_display(
-        opcode: OpCode,
-        index: &Register16Bit,
-        registers: &mut Register8BitArray,
-        memory: &Memory,
-        display: &mut Display,
-    ) -> Result<(), Box<dyn Error>> {
-        let start_x = registers.get(opcode.x())?.get() % Display::WIDTH as u8;
-        let mut y = registers.get(opcode.y())?.get() % Display::HEIGHT as u8;
+    fn clear_display(&mut self, _opcode: OpCode) -> Result<()> {
+        self.display.clear()?;
+        Ok(())
+    }
+
+    fn update_display(&mut self, opcode: OpCode) -> Result<()> {
+        let start_x = self.registers.get(opcode.x())?.get() % Display::WIDTH as u8;
+        let mut y = self.registers.get(opcode.y())?.get() % Display::HEIGHT as u8;
         let n = opcode.n();
-        registers.get_mut(0xF)?.set(0); // Reset collision flag
+        self.registers.get_mut(0xF)?.set(0); // Reset collision flag
         for i in 0..n {
-            let sprite = memory.read(index.get() + i as u16)?;
+            let sprite = self.memory.read(self.index.get() + i as u16)?;
             let mut x = start_x; // Reset x for each row
             for bit_mask in [128, 64, 32, 16, 8, 4, 2, 1] {
                 if x as usize >= Display::WIDTH {
                     break; // Clip at screen edge
                 }
                 if sprite & bit_mask != 0 {
-                    if display.is_on(x, y)? {
-                        display.set(x, y, false)?;
-                        registers.get_mut(0xF)?.set(1); // Collision detected
+                    if self.display.is_on(x, y)? {
+                        self.display.set(x, y, false)?;
+                        self.registers.get_mut(0xF)?.set(1); // Collision detected
                     } else {
-                        display.set(x, y, true)?;
+                        self.display.set(x, y, true)?;
                     }
                 }
                 x += 1;
@@ -327,22 +216,205 @@ impl Chip8 {
         Ok(())
     }
 
-    fn shift(
-        opcode: OpCode,
-        registers: &mut Register8BitArray,
-        dir: Dir,
-    ) -> Result<(), Box<dyn Error>> {
-        let vx = registers.get(opcode.x())?.get();
-        registers.get_mut(opcode.x())?.set(match dir {
+    fn shift(&mut self, opcode: OpCode, dir: Dir) -> Result<()> {
+        let vx = self.registers.get(opcode.x())?.get();
+        self.registers.get_mut(opcode.x())?.set(match dir {
             Dir::Left => vx << 1,
             Dir::Right => vx >> 1,
         });
-        registers.get_mut(0xF)?.set(
+        self.registers.get_mut(0xF)?.set(
             match dir {
                 Dir::Left => vx >> 7,
                 Dir::Right => vx,
             } & 0x1,
         );
+        Ok(())
+    }
+
+    pub fn shift_left(&mut self, opcode: OpCode) -> Result<()> {
+        self.shift(opcode, Dir::Left)
+    }
+
+    pub fn shift_right(&mut self, opcode: OpCode) -> Result<()> {
+        self.shift(opcode, Dir::Right)
+    }
+
+    fn set_vx_from_vy(&mut self, opcode: OpCode) -> Result<()> {
+        let vy = self.registers.get(opcode.y())?.get();
+        self.registers.get_mut(opcode.x())?.set(vy);
+        Ok(())
+    }
+
+    fn set_variable_register(&mut self, opcode: OpCode) -> Result<()> {
+        self.registers.get_mut(opcode.x())?.set(opcode.nn());
+        Ok(())
+    }
+
+    fn set_index(&mut self, opcode: OpCode) -> Result<()> {
+        self.index.set(opcode.nnn());
+        Ok(())
+    }
+
+    fn or(&mut self, opcode: OpCode) -> Result<()> {
+        let result = self.registers.get(opcode.x())?.get() | self.registers.get(opcode.y())?.get();
+        self.registers.get_mut(opcode.x())?.set(result);
+        Ok(())
+    }
+
+    fn and(&mut self, opcode: OpCode) -> Result<()> {
+        let result = self.registers.get(opcode.x())?.get() & self.registers.get(opcode.y())?.get();
+        self.registers.get_mut(opcode.x())?.set(result);
+        Ok(())
+    }
+
+    fn xor(&mut self, opcode: OpCode) -> Result<()> {
+        let result = self.registers.get(opcode.x())?.get() ^ self.registers.get(opcode.y())?.get();
+        self.registers.get_mut(opcode.x())?.set(result);
+        Ok(())
+    }
+
+    fn add(&mut self, opcode: OpCode) -> Result<()> {
+        let (new, _overflow) = self
+            .registers
+            .get(opcode.x())?
+            .get()
+            .overflowing_add(opcode.nn());
+        self.registers.get_mut(opcode.x())?.set(new);
+        Ok(())
+    }
+
+    fn add_carry(&mut self, opcode: OpCode) -> Result<()> {
+        let (result, overflow) = self
+            .registers
+            .get(opcode.x())?
+            .get()
+            .overflowing_add(self.registers.get(opcode.y())?.get());
+        self.registers.get_mut(opcode.x())?.set(result);
+        self.registers.get_mut(0xF)?.set(overflow as u8);
+        Ok(())
+    }
+
+    fn skip_if_key(&mut self, opcode: OpCode) -> Result<()> {
+        let register_value = self.registers.get(opcode.x())?.get();
+        if self.keys.is_pressed(register_value) {
+            self.pc.increment();
+        }
+        Ok(())
+    }
+
+    fn skip_if_not_key(&mut self, opcode: OpCode) -> Result<()> {
+        let register_value = self.registers.get(opcode.x())?.get();
+        if !self.keys.is_pressed(register_value) {
+            self.pc.increment();
+        }
+        Ok(())
+    }
+
+    fn jump_with_offset(&mut self, opcode: OpCode) -> Result<()> {
+        self.pc
+            .set(self.registers.get(0x0)?.get() as u16 + opcode.nnn());
+        Ok(())
+    }
+
+    fn random_and(&mut self, opcode: OpCode) -> Result<()> {
+        self.registers
+            .get_mut(opcode.x())?
+            .set(rand::random::<u8>() & opcode.nn());
+        Ok(())
+    }
+
+    fn skip_conditonally_not_equal_nn(&mut self, opcode: OpCode) -> Result<()> {
+        if self.registers.get(opcode.x())?.get() != opcode.nn() {
+            self.pc.increment();
+        }
+        Ok(())
+    }
+
+    fn skip_conditonally_equal_nn(&mut self, opcode: OpCode) -> Result<()> {
+        if self.registers.get(opcode.x())?.get() == opcode.nn() {
+            self.pc.increment();
+        }
+        Ok(())
+    }
+
+    fn skip_conditonally_equal_xy(&mut self, opcode: OpCode) -> Result<()> {
+        if self.registers.get(opcode.x())?.get() == self.registers.get(opcode.y())?.get() {
+            self.pc.increment();
+        }
+        Ok(())
+    }
+
+    fn skip_conditonally_not_equal_xy(&mut self, opcode: OpCode) -> Result<()> {
+        if self.registers.get(opcode.x())?.get() != self.registers.get(opcode.y())?.get() {
+            self.pc.increment();
+        }
+        Ok(())
+    }
+
+    fn set_x_to_delay(&mut self, opcode: OpCode) -> Result<()> {
+        self.registers
+            .get_mut(opcode.x())?
+            .set(self.delay_timer.get());
+        Ok(())
+    }
+
+    fn set_delay(&mut self, opcode: OpCode) -> Result<()> {
+        self.delay_timer.set(self.registers.get(opcode.x())?.get());
+        Ok(())
+    }
+
+    fn set_sound(&mut self, opcode: OpCode) -> Result<()> {
+        self.sound_timer.set(self.registers.get(opcode.x())?.get());
+        Ok(())
+    }
+
+    fn add_x_to_index(&mut self, opcode: OpCode) -> Result<()> {
+        self.index
+            .set(self.index.get() + self.registers.get(opcode.x())?.get() as u16);
+        Ok(())
+    }
+
+    fn set_index_to_font(&mut self, opcode: OpCode) -> Result<()> {
+        let char = self.registers.get(opcode.x())?.get() & 0x0F;
+        let char_addr = (char * 5) + 5;
+        self.index.set(char_addr as u16);
+        Ok(())
+    }
+
+    fn bcd_x_in_index(&mut self, opcode: OpCode) -> Result<()> {
+        let vx = self.registers.get(opcode.x())?.get();
+        let i = self.index.get();
+        self.memory.write(i, vx / 100)?;
+        self.memory.write(i + 1, (vx % 100) / 10)?;
+        self.memory.write(i + 2, vx % 10)?;
+        Ok(())
+    }
+
+    fn set_x_in_index_spread(&mut self, opcode: OpCode) -> Result<()> {
+        let i = self.index.get();
+        for j in 0..=opcode.x() {
+            self.memory
+                .write(i + j as u16, self.registers.get(j)?.get())?;
+        }
+        Ok(())
+    }
+
+    fn read_x_from_index_spread(&mut self, opcode: OpCode) -> Result<()> {
+        let i = self.index.get();
+        for j in 0..=opcode.x() {
+            self.registers
+                .get_mut(j)?
+                .set(self.memory.read(i + j as u16)?);
+        }
+        Ok(())
+    }
+
+    fn wait_for_key(&mut self, opcode: OpCode) -> Result<()> {
+        if let Some(k) = self.keys.first_pressed() {
+            self.registers.get_mut(opcode.x())?.set(k);
+        } else {
+            self.pc.decrement();
+        }
         Ok(())
     }
 }
