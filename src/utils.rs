@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use crossterm::{cursor::MoveTo, execute, style::Print};
 
-use crate::display::Display as Chip8Display;
+use crate::display::DisplayBuffer as Chip8Display;
 
 pub fn debug_out<T: Debug>(msg: T) {
     let mut stdout = std::io::stdout();

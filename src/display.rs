@@ -3,11 +3,14 @@ use std::io::{self, Write};
 use crossterm::{cursor, queue, style};
 
 #[derive(Debug)]
-pub struct Display {
+pub struct Screen {}
+
+#[derive(Debug)]
+pub struct DisplayBuffer {
     pub pixels: [[bool; Self::WIDTH]; Self::HEIGHT],
 }
 
-impl Default for Display {
+impl Default for DisplayBuffer {
     fn default() -> Self {
         Self {
             pixels: [[false; Self::WIDTH]; Self::HEIGHT],
@@ -15,13 +18,12 @@ impl Default for Display {
     }
 }
 
-impl Display {
+impl DisplayBuffer {
     pub const WIDTH: usize = 64;
     pub const HEIGHT: usize = 32;
 
     pub fn clear(&mut self) -> Result<(), std::io::Error> {
         self.pixels = [[false; Self::WIDTH]; Self::HEIGHT];
-        self.render()?;
         Ok(())
     }
 
@@ -39,25 +41,6 @@ impl Display {
         let row = self.pixels.get_mut(y).ok_or("y overflow".to_string())?;
         let pixel = row.get_mut(x).ok_or("x overflow".to_string())?;
         *pixel = state;
-        Ok(())
-    }
-
-    pub fn render(&self) -> Result<(), io::Error> {
-        let mut stdout = io::stdout();
-        for y in 0..self.pixels.len() {
-            for x in 0..self.pixels[y].len() {
-                let char = match self.pixels[y][x] {
-                    true => '█',
-                    false => ' ',
-                };
-                queue!(
-                    stdout,
-                    cursor::MoveTo(x as u16, y as u16),
-                    style::Print(char)
-                )?;
-            }
-        }
-        stdout.flush()?;
         Ok(())
     }
 }
