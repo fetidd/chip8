@@ -1,11 +1,5 @@
-use std::{
-    error::Error,
-    io::Write,
-    time::{Duration, Instant},
-};
-
 use crate::{
-    display::{self, DisplayBuffer},
+    display::DisplayBuffer,
     error::Result,
     input::Keypad,
     memory::{Memory, OpCode},
@@ -13,7 +7,6 @@ use crate::{
     register::{Register8BitArray, Register16Bit},
     stack::Stack,
     timer::Timer,
-    utils::debug_out,
 };
 
 #[derive(Debug)]
@@ -113,7 +106,7 @@ impl Chip8 {
             "unknown opcode {:04X} at {addr} [0x{addr:04X}]",
             opcode.inner(),
         );
-        Err(crate::error::Error::FatalError(e))
+        Err(crate::error::Error::Fatal(e))
     }
 
     fn call_subroutine(&mut self, opcode: OpCode) -> Result<()> {
@@ -393,8 +386,9 @@ impl Chip8 {
     }
 
     fn wait_for_key(&mut self, opcode: OpCode, keypad: &Keypad) -> Result<()> {
-        if let Some(k) = keypad.pressed() {
-            self.registers.get_mut(opcode.x())?.set(k);
+        let pressed = keypad.pressed();
+        if !pressed.is_empty() {
+            self.registers.get_mut(opcode.x())?.set(pressed[0]);
         } else {
             self.pc.decrement();
         }

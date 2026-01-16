@@ -21,7 +21,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 
-use crate::{display::DisplayBuffer, input::Keypad};
+use crate::{display::DisplayBuffer, input::Keypad, utils::debug_out};
 
 const FRAME_TIMEOUT: f32 = 1.0 / 60.0;
 
@@ -45,7 +45,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             last_display_buffer_refresh = loop_time;
         }
         quit = keypad.poll()?;
+        debug_out(&keypad.pressed());
         chip.cycle(&keypad)?;
+        // keypad.clear();
     }
 
     disable_raw_mode()?;

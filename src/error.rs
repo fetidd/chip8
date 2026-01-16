@@ -2,9 +2,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
-    UnknownError(String),
-    FatalError(String),
-    IoError(String),
+    Unknown(String),
+    Fatal(String),
+    Io(String),
 }
 
 impl std::fmt::Display for Error {
@@ -13,9 +13,9 @@ impl std::fmt::Display for Error {
             f,
             "{}",
             match self {
-                Error::UnknownError(s) => s,
-                Error::IoError(s) => s,
-                Error::FatalError(s) => s,
+                Error::Unknown(s) => s,
+                Error::Io(s) => s,
+                Error::Fatal(s) => s,
             }
         )
     }
@@ -25,12 +25,12 @@ impl std::error::Error for Error {}
 
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {
-        Error::IoError(format!("{value}"))
+        Error::Io(format!("{value}"))
     }
 }
 
 impl From<String> for Error {
     fn from(value: String) -> Self {
-        Error::UnknownError(value)
+        Error::Unknown(value)
     }
 }

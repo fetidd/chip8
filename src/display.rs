@@ -1,10 +1,3 @@
-use std::io::{self, Write};
-
-use crossterm::{cursor, queue, style};
-
-#[derive(Debug)]
-pub struct Screen {}
-
 #[derive(Debug)]
 pub struct DisplayBuffer {
     pub pixels: [[bool; Self::WIDTH]; Self::HEIGHT],

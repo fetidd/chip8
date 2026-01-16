@@ -21,11 +21,11 @@ impl Memory {
         let hi = *self
             .0
             .get(addr)
-            .ok_or_else(|| Error::UnknownError(format!("memory read out of bounds: {addr}")))?;
+            .ok_or_else(|| Error::Unknown(format!("memory read out of bounds: {addr}")))?;
         let lo = *self
             .0
             .get(addr + 1)
-            .ok_or_else(|| Error::UnknownError(format!("memory read out of bounds: {addr}")))?;
+            .ok_or_else(|| Error::Unknown(format!("memory read out of bounds: {addr}")))?;
         Ok(OpCode(u16::from_be_bytes([hi, lo])))
     }
 
@@ -34,7 +34,7 @@ impl Memory {
         self.0
             .get(addr)
             .copied()
-            .ok_or_else(|| Error::UnknownError(format!("memory read out of bounds: {addr}")))
+            .ok_or_else(|| Error::Unknown(format!("memory read out of bounds: {addr}")))
     }
 
     pub fn write<A: Into<usize>>(&mut self, addr: A, value: u8) -> Result<()> {
@@ -42,7 +42,7 @@ impl Memory {
         let cell = self
             .0
             .get_mut(addr)
-            .ok_or_else(|| Error::UnknownError(format!("memory read out of bounds: {addr}")))?;
+            .ok_or_else(|| Error::Unknown(format!("memory read out of bounds: {addr}")))?;
         *cell = value;
         Ok(())
     }
@@ -51,9 +51,7 @@ impl Memory {
         let addr = addr.into();
         let end = addr + data.len();
         if end > Self::MEMORY_SIZE {
-            return Err(Error::UnknownError(format!(
-                "memory read out of bounds: {addr}"
-            )));
+            return Err(Error::Unknown(format!("memory read out of bounds: {addr}")));
         }
         self.0[addr..end].copy_from_slice(data);
         Ok(())

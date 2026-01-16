@@ -9,19 +9,18 @@ pub struct Keypad {
 
 impl Keypad {
     pub fn poll(&mut self) -> Result<bool> {
-        if event::poll(Duration::from_millis(1))? {
-            if let Event::Key(KeyEvent {
+        if event::poll(Duration::from_millis(1))?
+            && let Event::Key(KeyEvent {
                 code, modifiers, ..
             }) = event::read()?
-            {
-                match (code, modifiers) {
-                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        return Ok(true);
-                    }
-                    (code, _) => {
-                        if let Some(key) = Keypad::get_key_value(code) {
-                            self.pressed[key as usize] = true;
-                        }
+        {
+            match (code, modifiers) {
+                (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                    return Ok(true);
+                }
+                (code, _) => {
+                    if let Some(key) = Keypad::get_key_value(code) {
+                        self.pressed[key as usize] = true;
                     }
                 }
             }
@@ -29,15 +28,17 @@ impl Keypad {
         Ok(false)
     }
 
-    pub fn pressed(&self) -> Option<u8> {
+    pub fn clear(&mut self) {
+        self.pressed = [false; 16];
+    }
+
+    pub fn pressed(&self) -> Vec<u8> {
         self.pressed
             .iter()
             .enumerate()
             .filter(|(_i, k)| **k)
             .map(|(i, _)| i as u8)
             .collect::<Vec<_>>()
-            .first()
-            .copied()
     }
 
     pub fn is_pressed(&self, key: u8) -> bool {
